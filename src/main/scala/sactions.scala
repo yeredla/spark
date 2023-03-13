@@ -1,55 +1,63 @@
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.{explode_outer, col}
 import org.apache.spark.sql._
+import scala.collection.mutable.Map
+import scala.util.Properties
 
-object sactions {
-def main(args : Array[String]) :Unit ={
-  val spark = SparkSession.builder().appName("first").enableHiveSupport().getOrCreate()
-  val ofac_path = args(0)
-  val uk_path = args(1)
-  val dfOFAC = spark.read.json(ofac_path)
-  dfOFAC.printSchema()
-  val dfGBR = spark.read.json(uk_path)
-  dfGBR.printSchema()
-  dfOFAC.write.saveAsTable("OFAC")
-  dfGBR.write.saveAsTable("GBR")
-
-  val explode_ofac = "addresses,aliases,reported_dates_of_birth"
-  val explode_uk = "addresses,aliases,reported_dates_of_birth"
-
-  val expand_uk = Map("addresses" -> Map("country" -> "country","postal_code"->"postal_code","value"->"city") ,"aliases" -> Map("type"->"alias_type","value"->"alias_value"))
-  val expand_ofac = Map("addresses" -> Map("country" -> "country","postal_code"->"postal_code","value"->"city") ,"aliases" -> Map("type"->"alias_type","value"->"alias_value"))
-
-  var dfOFAC_exp = dfOFAC
-  var dfGBR_exp = dfGBR
-
-  explode_ofac.split(",").foreach(column => dfOFAC_exp = dfOFAC_exp.withColumn(column,explode_outer(col(column))))
-  explode_uk.split(",").foreach(column => dfGBR_exp = dfGBR_exp.withColumn(column,explode_outer(col(column))))
-
-  import org.apache.spark.sql.DataFrame
+object sayari {
 
 
-  dfGBR_exp = df_flatten(dfGBR_exp,expand_uk)
-  dfOFAC_exp = df_flatten(dfOFAC_exp,expand_ofac)
+    def main(args : Array[String]) :Unit ={
+      val spark = SparkSession.builder().appName("Sayari Sanctions").enableHiveSupport().getOrCreate()
+      spark.conf.set("spark.sql.crossJoin.enabled","true")
+  
+      val ofac_path = args(0)
+      val uk_path = args(1)
+      val scalaVersion = Properties.versionNumberString
+      println(s"Scala version is $scalaVersion")
+      val location = Properties.getClass.getProtectionDomain.getCodeSource.getLocation
+      println(s"Path to scala.util.Properties class file: $location")
+      val dfOFAC = spark.read.json(ofac_path)
+      dfOFAC.printSchema()
+      val dfGBR = spark.read.json(uk_path)
+      dfGBR.printSchema()
+      dfOFAC.write.mode("overwrite").saveAsTable("OFAC")
+      dfGBR.write.mode("overwrite").saveAsTable("GBR")
 
-  dfOFAC_exp.write.saveAsTable("OFAC_expanded")
-  dfGBR_exp.write.saveAsTable("GBR_expanded")
+      val explode_ofac = "addresses,aliases,reported_dates_of_birth"
+      val explode_uk = "addresses,aliases,reported_dates_of_birth"
 
-  ///////////////////////////////////////////////////// INDIVIDUAL ///////////////////////////////////////////////////////////////
+      val expand_uk = Map("addresses" -> Map("country" -> "country","postal_code"->"postal_code","value"->"city") ,"aliases" -> Map("type"->"alias_type","value"->"alias_value"))
+      val expand_ofac = Map("addresses" -> Map("country" -> "country","postal_code"->"postal_code","value"->"city") ,"aliases" -> Map("type"->"alias_type","value"->"alias_value"))
 
-  spark.conf.set("spark.sql.crossJoin.enabled","true")
+      var dfOFAC_exp = dfOFAC
+      var dfGBR_exp = dfGBR
 
-  val uk_ind = spark.sql("select alias_value UK_alias_value,alias_type UK_alias_type,city UK_city,postal_code UK_postal_code,country UK_country,id UK_id,name UK_name,cast(unix_timestamp(trim(reported_dates_of_birth), 'dd/MM/yyyy') as string) UK_DOB, place_of_birth UK_POB from default.GBR_expanded  where trim(lower(type)) = 'individual'")
+      explode_ofac.split(",").foreach(column => dfOFAC_exp = dfOFAC_exp.withColumn(column,explode_outer(col(column))))
+      explode_uk.split(",").foreach(column => dfGBR_exp = dfGBR_exp.withColumn(column,explode_outer(col(column))))
 
-
-  val us_ind = spark.sql("select alias_value USA_alias_value,alias_type USA_alias_type,city USA_city,postal_code USA_postal_code,country USA_country,id USA_id,name USA_name,cast(unix_timestamp(trim(reported_dates_of_birth), 'dd MMM yyyy') as string) USA_DOB, place_of_birth USA_POB from default.OFAC_expanded  where trim(lower(type)) = 'individual'")
-
-
-  uk_ind.join(us_ind).write.saveAsTable("combined_cross_join")
+      import org.apache.spark.sql.DataFrame
 
 
-  val leven_query = """
-     |select * from (select *,
+      dfGBR_exp = df_flatten(dfGBR_exp,expand_uk)
+      dfOFAC_exp = df_flatten(dfOFAC_exp,expand_ofac)
+
+      dfOFAC_exp.write.mode("overwrite").saveAsTable("OFAC_expanded")
+      dfGBR_exp.write.mode("overwrite").saveAsTable("GBR_expanded")
+
+      ///////////////////////////////////////////////////// INDIVIDUAL ///////////////////////////////////////////////////////////////
+
+      val uk_ind = spark.sql("select alias_value UK_alias_value,alias_type UK_alias_type,city UK_city,postal_code UK_postal_code,country UK_country,id UK_id,name UK_name,cast(unix_timestamp(trim(reported_dates_of_birth), 'dd/MM/yyyy') as string) UK_DOB, place_of_birth UK_POB from default.GBR_expanded  where trim(lower(type)) = 'individual'")
+
+
+      val us_ind = spark.sql("select alias_value USA_alias_value,alias_type USA_alias_type,city USA_city,postal_code USA_postal_code,country USA_country,id USA_id,name USA_name,cast(unix_timestamp(trim(reported_dates_of_birth), 'dd MMM yyyy') as string) USA_DOB, place_of_birth USA_POB from default.OFAC_expanded  where trim(lower(type)) = 'individual'")
+
+
+      uk_ind.join(us_ind).write.mode("overwrite").saveAsTable("combined_cross_join")
+
+
+      val leven_query = """
+      select * from (select *,
       levenshtein(trim(lower(UK_name)),trim(lower(USA_name))) as leven_name,
       100.0 -(100.0 * levenshtein(trim(lower(UK_name)),trim(lower(USA_name))) / greatest(length(trim(USA_name)),length(trim(UK_name)))) as leven_name_percent,
       levenshtein(trim(lower(UK_alias_value)),trim(lower(USA_alias_value))) as leven_alias,
@@ -64,15 +72,15 @@ def main(args : Array[String]) :Unit ={
       """
 
 
-  spark.sql(leven_query).write.saveAsTable("leven_individual")
+      spark.sql(leven_query).write.mode("overwrite").saveAsTable("leven_individual")
 
-  val name_weight = 85
-  val DOB_weight = 10
-  val alias_weight = 3
-  val country_weight = 2
-  val weighted_percentage_threshold = 70
+      val name_weight = 85
+      val DOB_weight = 10
+      val alias_weight = 3
+      val country_weight = 2
+      val weighted_percentage_threshold = 70
 
-  val weight_query = s"""
+      val weight_query = s"""
 WITH leven_weighted as
 (SELECT  *,((${name_weight} * coalesce(leven_name_percent,0)) + (${DOB_weight} * coalesce(leven_dob_percent,0)) + (${alias_weight} * coalesce(leven_alias_percent,0))) / (${name_weight} + ${DOB_weight} + ${alias_weight}) * 100 / 100 AS weighted_similarity_percentage from leven_individual),
 ranked as
@@ -119,11 +127,11 @@ inner join
 (select * from rank_filter) rnk
 on rnk.usa_id =orig.us_id and rnk.uk_id=orig.uk_id"""
 
-  spark.sql(weight_query).write.mode("overwrite").saveAsTable("weighted_leven_individual")
+      spark.sql(weight_query).write.mode("overwrite").saveAsTable("weighted_leven_individual")
 
-  ////////////////////////////////ENTITY////////////////////////////////////////////
+      ////////////////////////////////ENTITY////////////////////////////////////////////
 
-  val leven_entity="""
+      val leven_entity="""
 WITH
 t1 as
 (select addresses UK_addresses,aliases UK_aliases,id_numbers UK_id_numbers,id UK_id,name UK_name,reported_dates_of_birth uk_dob, gbr.type uk_type from default.gbr  where trim(lower(type)) = 'entity'),
@@ -152,33 +160,33 @@ leven_name_percent as weighted_similarity_percentage
 from t4 where leven_name_percent > 80"""
 
 
-  spark.sql(leven_entity).write.mode("overwrite").saveAsTable("weighted_leven_entity")
+      spark.sql(leven_entity).write.mode("overwrite").saveAsTable("weighted_leven_entity")
 
-    //////////////////////////////// UNION ////////////////////////////////////////////
+//////////////////////////////// UNION ////////////////////////////////////////////
 
-    val union_query = """
+      val union_query = """
 select * from weighted_leven_individual
 UNION
 select * from weighted_leven_entity
 """
 
-    spark.sql(union_query).write.mode("overwrite").saveAsTable("final_result")
-  }
+      spark.sql(union_query).write.mode("overwrite").saveAsTable("final_result")
+    }
 
     def df_flatten(df :DataFrame , expandMap : Map[String,Map[String,String]]) : DataFrame = {
-    var dfRes = df
-    expandMap.foreach(column => {
-    val col_name = column._1
-    val col_map = column._2
-    col_map.foreach(elem => {
-    val field = elem._1
-    val alias = elem._2
-    println(s"parent column is $col_name. sub column is $field. Alias is $alias")
-    dfRes = dfRes.selectExpr(s"$col_name.$field as $alias", "*")
-    })
-    dfRes = dfRes.drop(s"$col_name")
-  })
-    dfRes
-}
+      var dfRes = df
+      expandMap.foreach(column => {
+        val col_name = column._1
+        val col_map = column._2
+        col_map.foreach(elem => {
+          val field = elem._1
+          val alias = elem._2
+          println(s"parent column is $col_name. sub column is $field. Alias is $alias")
+          dfRes = dfRes.selectExpr(s"$col_name.$field as $alias", "*")
+        })
+        dfRes = dfRes.drop(s"$col_name")
+      })
+      dfRes
+    }
 
-}
+  }
