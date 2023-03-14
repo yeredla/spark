@@ -15,3 +15,7 @@ spark-submit --master local --deploy-mode client --num-executors 4 --executor-co
 OUTPUT FILE NAME : 
 
 sanctions_match.xlsx
+
+NOTE: 
+
+The greater the value of the weighted_similarity_percentage, the stronger the degree of match between the records.
