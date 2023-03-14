@@ -9,7 +9,7 @@ STEPS TO RUN :
 
 1) Place the ofac.jsonl and gbr.jsonl in HDFS
 2) Run the following spark-submit command - 
-spark-submit --master yarn --deploy-mode client --num-executors 4 --executor-cores 4 --class sayari sayari_sanctions_2.11-0.1.jar "hdfspath/to/ofac.jsonl" "hdfs/path/to/gbr.jsonl"
+spark-submit --master local --deploy-mode client --num-executors 4 --executor-cores 4 --class sayari sayari_sanctions_2.11-0.1.jar "hdfspath/to/ofac.jsonl" "hdfs/path/to/gbr.jsonl"
 
 
 OUTPUT FILE NAME : 
